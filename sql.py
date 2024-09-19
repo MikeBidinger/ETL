@@ -90,7 +90,8 @@ class PostgreSQL:
         self.float = "FLOAT"
         self.datetime = "TIMESTAMP"
         self.date = "DATE"
-        self.char = "CHARACTER"
+        self.char = "VARCHAR(255)"
+        self.text = "TEXT"
         self.data_types = {
             self.bit: 1,
             self.num: 2,
@@ -98,13 +99,14 @@ class PostgreSQL:
             self.datetime: 4,
             self.date: 5,
             self.char: 6,
+            self.text: 7,
         }
         self.preserved_keywords = PRESERVED_KEYWORDS
         # Optional constants
         self.p_key = ""
         # Script variables:
-        self.fields = {}
-        self.field_suffix = "_field"
+        self.columns = {}
+        self.column_suffix = "_column"
         self.sql_script = ""
         # - Create schema statement
         self.schema_script = f"CREATE SCHEMA IF NOT EXISTS {self.db_name}\n"
@@ -116,8 +118,7 @@ class PostgreSQL:
         self.insert_script = f"DELETE FROM {self.table_name};\n"
 
     def load_data(self):
-        self.fields = self._set_source_fields()
-        # self.schema_script = self._set_schema_script()
+        self.columns = self._set_source_columns()
         self.insert_script = self._set_insert_script()
         self.table_script = self._set_table_script()
         self.sql_script = self.schema_script + self.table_script + self.insert_script
@@ -125,41 +126,33 @@ class PostgreSQL:
     def write_script(self):
         return self.sql_script
 
-    def _set_source_fields(self):
-        fields = {}
-        columns = list(self.df.columns)
-        # Rename fields when necessary
-        for field in list(self.df.columns):
+    def _set_source_columns(self):
+        columns = {}
+        # Rename columns where necessary
+        for column in list(self.df.columns):
             if (
-                field.upper() in self.data_types.keys()
-                or field.upper() in self.preserved_keywords
+                column.upper() in self.data_types.keys()
+                or column.upper() in self.preserved_keywords
             ):
-                self.df.rename(columns={field: f"{field}{self.field_suffix}"}, inplace=True)
-        for field in list(self.df.columns):
-            if " " in field:
-                self.df.rename(columns={field: field.replace(" ", "_")}, inplace=True)
-        # Set field details (length & type)
-        for field in list(self.df.columns):
-            length = self.df[field].astype(str).str.len().max()
-            fields[field] = {"length": length, "type": ""}
-        return fields
-
-    # def _set_schema_script(self):
-    #     return self.schema_script
+                self.df.rename(columns={column: f"{column}{self.column_suffix}"}, inplace=True)
+        for column in list(self.df.columns):
+            if " " in column:
+                self.df.rename(columns={column: column.replace(" ", "_")}, inplace=True)
+        # Set column details (length & type)
+        for column in list(self.df.columns):
+            length = self.df[column].astype(str).str.len().max()
+            columns[column] = {"length": length, "type": ""}
+        return columns
 
     def _set_table_script(self):
         script = self.table_script
         # Write create table statement script
         script += self.table_create
-        for field, data_info in self.fields.items():
-            script += f"{self.tab}{field} {data_info["type"]}"
-            if data_info["type"] == self.char:
-                script += f"({data_info["length"]}),\n"
-            else:
-                script += ",\n"
+        for column, data_info in self.columns.items():
+            script += f"{self.tab}{column} {data_info["type"]},\n"
         table_key = self.table_name.split(".")[-1] + "_pkey"
         if self.p_key == "":
-            self.p_key = list(self.fields.keys())[0]
+            self.p_key = list(self.columns.keys())[0]
         return script + f"CONSTRAINT {table_key} PRIMARY KEY ({self.p_key}));\n\n"
 
     def _set_insert_script(self):
@@ -167,61 +160,65 @@ class PostgreSQL:
         # Get values and write insert statements for each row within the data
         for _, row in self.df.iterrows():
             insert_str = f"INSERT INTO {self.table_name}(\n"
-            field_str = f"{self.tab}"
+            column_str = f"{self.tab}"
             val_str = f"{self.tab}VALUES ("
-            for field, val in row.items():
-                field_str += f"{field}, "
-                val_str += f"{self._validate_data_type(str(val), field)}"
-            insert_str += f"{field_str[:-2]})\n"
+            for column, val in row.items():
+                column_str += f"{column}, "
+                val_str += f"{self._validate_data_type(str(val), column)}"
+            insert_str += f"{column_str[:-2]})\n"
             insert_str += f"{val_str[:-2]});\n"
             script += insert_str
         return script
 
-    def _validate_data_type(self, value: str, field: str):
+    def _validate_data_type(self, value: str, column: str):
         if value == "" or value == None:
             value = self.null
         # NULL
         if value == self.null:
-            self._compare_data_type(field, self.bit)
+            self._compare_data_type(column, self.bit)
             return f"{value}, "
         # Numeric
         elif value == "0" or (
             value.startswith("0") == False
             and (value.isdigit() or (value.startswith("-") and value[1:].isdigit()))
         ):
-            self._compare_data_type(field, self.num)
+            self._compare_data_type(column, self.num)
             return f"{value}, "
         # Float
         elif "." in value and (
             value.replace(".", "", 1).isdigit()
             or (value.startswith("-") and value.replace(".", "", 1)[1:].isdigit())
         ):
-            self._compare_data_type(field, self.float)
+            self._compare_data_type(column, self.float)
             return f"{value}, "
         # Datetime
         elif is_datetime(value):
-            self._compare_data_type(field, self.datetime)
+            self._compare_data_type(column, self.datetime)
             return f"'{value}', "
         # Date
         elif is_date(value):
-            self._compare_data_type(field, self.date)
+            self._compare_data_type(column, self.date)
             return f"'{value}', "
-        # Character
         else:
-            self._compare_data_type(field, self.char)
-            return f"'{value}', "
+            # Character
+            if self.columns[column]["length"] < 256:
+                self._compare_data_type(column, self.char)
+            # Text
+            else:
+                self._compare_data_type(column, self.text)
+        return f"'{value}', "
 
-    def _compare_data_type(self, field: str, val_type: str):
-        d_type = self.fields[field].get("type", "")
+    def _compare_data_type(self, column: str, val_type: str):
+        d_type = self.columns[column].get("type", "")
         # Undefined
         if d_type == "":
-            self.fields[field]["type"] = val_type
+            self.columns[column]["type"] = val_type
         # Differences
         elif self.data_types[val_type] > self.data_types[d_type]:
-            self.fields[field]["type"] = val_type
+            self.columns[column]["type"] = val_type
         # NULL
         elif val_type == self.bit and d_type != self.bit:
-            self.fields[field]["type"] = d_type
+            self.columns[column]["type"] = d_type
 
 
 def is_datetime(date_str: str):
