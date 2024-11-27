@@ -136,7 +136,9 @@ class PostgreSQL:
                 column.upper() in self.data_types.keys()
                 or column.upper() in self.preserved_keywords
             ):
-                self.df.rename(columns={column: f"{column}{self.column_suffix}"}, inplace=True)
+                self.df.rename(
+                    columns={column: f"{column}{self.column_suffix}"}, inplace=True
+                )
         for column in list(self.df.columns):
             if " " in column:
                 self.df.rename(columns={column: column.replace(" ", "_")}, inplace=True)
@@ -162,16 +164,16 @@ class PostgreSQL:
         # Get values and write insert statements for each row within the data
         insert_str = f"INSERT INTO {self.table_name}\n{self.tab}("
         insert_str += ", ".join(self.columns)
-        insert_str += ")\nVALUES"
-        val_str = ""
+        insert_str += ")\nVALUES\n"
+        values = []
         for _, row in self.df.iterrows():
-            val_str += f"\n{self.tab}("
+            val_str = f"{self.tab}("
             for column, val in row.items():
                 val_str += f"{self._validate_data_type(str(val), column)}"
-            val_str += "),"
+            values.append(val_str[:-2] + "),")
         script += insert_str
-        script += val_str[:-1]
-        script += ";"
+        script += "\n".join(values)
+        script += script[:-1] + ";"
         return script
 
     def _validate_data_type(self, value: str, column: str):
