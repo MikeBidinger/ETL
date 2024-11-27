@@ -14,6 +14,7 @@ DATE_FORMAT = "%Y-%m-%d"
 PRESERVED_KEYWORDS = [
     "ID",
     "DATE",
+    "TYPE",
     "RESULT",
     "GROUP",
     "POSITION",
@@ -110,7 +111,8 @@ class PostgreSQL:
         self.sql_script = ""
         # - Create schema statement
         self.schema_script = f"CREATE SCHEMA IF NOT EXISTS {self.db_name}\n"
-        self.schema_script += f"{self.tab}AUTHORIZATION dbadmin;\n\n"
+        # self.schema_script += f"{self.tab}AUTHORIZATION dbadmin;\n\n"
+        self.schema_script += "\n"
         # - Create table statement
         self.table_script = f"DROP TABLE IF EXISTS {self.table_name};\n"
         self.table_create = f"CREATE TABLE IF NOT EXISTS {self.table_name}\n(\n"
@@ -158,16 +160,18 @@ class PostgreSQL:
     def _set_insert_script(self):
         script = self.insert_script
         # Get values and write insert statements for each row within the data
+        insert_str = f"INSERT INTO {self.table_name}\n{self.tab}("
+        insert_str += ", ".join(self.columns)
+        insert_str += ")\nVALUES"
+        val_str = ""
         for _, row in self.df.iterrows():
-            insert_str = f"INSERT INTO {self.table_name}(\n"
-            column_str = f"{self.tab}"
-            val_str = f"{self.tab}VALUES ("
+            val_str += f"\n{self.tab}("
             for column, val in row.items():
-                column_str += f"{column}, "
                 val_str += f"{self._validate_data_type(str(val), column)}"
-            insert_str += f"{column_str[:-2]})\n"
-            insert_str += f"{val_str[:-2]});\n"
-            script += insert_str
+            val_str += "),"
+        script += insert_str
+        script += val_str[:-1]
+        script += ";"
         return script
 
     def _validate_data_type(self, value: str, column: str):
